@@ -22,7 +22,7 @@ class CameraSession(
     private val appContext = context.applicationContext
     private val analyzerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val throttle = AnalysisThrottle()
-    private val engine = runCatching {
+    private val engine: PoseLandmarkerEngine? = runCatching {
         PoseLandmarkerEngine(
             context = appContext,
             delegate = Delegate.CPU,
@@ -31,7 +31,9 @@ class CameraSession(
                     throttle.recordInference(result.inferenceTimeMs)
                     onVisionResult(result)
                 }
-                override fun onError(message: String) = onError(message)
+                override fun onError(message: String) {
+                    this@CameraSession.onError(message)
+                }
             },
         )
     }.onFailure {

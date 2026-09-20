@@ -22,7 +22,8 @@ class GenerationWorker(context: Context, parameters: WorkerParameters) : Corouti
             return@withContext Result.failure()
         }
         try {
-            var remote = if (job.remoteJobId == null) {
+            val remoteJobId = job.remoteJobId
+            var remote = if (remoteJobId == null) {
                 api.create(job).also { created ->
                     job = job.copy(
                         remoteJobId = created.id,
@@ -33,7 +34,7 @@ class GenerationWorker(context: Context, parameters: WorkerParameters) : Corouti
                     dao.upsert(job)
                 }
             } else {
-                api.get(job.remoteJobId)
+                api.get(remoteJobId)
             }
             repeat(MAX_POLLS) {
                 if (isStopped) return@withContext Result.failure()
