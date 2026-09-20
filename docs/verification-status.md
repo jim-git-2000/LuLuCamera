@@ -5,7 +5,7 @@
 | 步骤 | 已写入工程 | 尚未完成的验收 |
 | --- | --- | --- |
 | 1 | Android/Compose 工程、Gradle Wrapper、固定版本、CI 与 APK artifact | CI 未在远程运行；未取得两台基线手机 |
-| 2 | CameraX 前后镜头、生命周期、RGBA 分析、背压、坐标映射与测试 | 无 SDK Platform 37，未编译；无真机 10 分钟记录 |
+| 2 | CameraX 前后镜头、生命周期、RGBA 分析、背压、坐标映射与测试 | 无 SDK Platform 36，未编译；无真机 10 分钟记录 |
 | 3 | MediaPipe 模型校验、最多 3 人、姿态及掩码可用性标记 | 未提取逐人掩码像素；未测多人、延迟、内存和温升 |
 | 4 | 同帧契约、矢量噜噜、动作映射与快照合成 | 正式 GLB、SceneView/Filament 骨骼、真人覆盖和导出一致性未验收 |
 | 5 | Track 状态机、点击命中、逐人绑定、回放测试和 ADR | 未做 ByteTrack 回放对照及真机交叉验证 |
@@ -17,6 +17,6 @@
 | 11 | 分析节流、CPU 失败回退、Android/后端 CI 与报告 artifact | 性能、连续运行、多机型、发热、内存和真实服务可达性均未测 |
 | 12 | 20～50 人内测说明、反馈模板和数据处理草案 | 尚未分发或邀请，未产生用户数据和下一版结论 |
 
-本机已完成：Python 语法编译、SQLite 幂等/访问隔离冒烟测试、Pillow 掩码外像素保护冒烟测试、XML/YAML 解析、Shell 语法、模型和 Wrapper JAR 哈希、`git diff --check`。本机没有 FastAPI、Huey、pytest、SDK Platform 37 或 Gradle 分发缓存，遵循项目规则未安装或升级环境，因此 Android lint/JVM test/APK 和完整后端测试留给 GitHub Actions。
+本机已完成：Python 语法编译、SQLite 幂等/访问隔离冒烟测试、Pillow 掩码外像素保护冒烟测试、XML/YAML 解析、Shell 语法、模型和 Wrapper JAR 哈希、`git diff --check`。本机没有 FastAPI、Huey、pytest、SDK Platform 36 或 Gradle 分发缓存，遵循项目规则未安装或升级环境，因此 Android lint/JVM test/APK 和完整后端测试留给 GitHub Actions。
 
 发布判断仍以证据为准：构建通过只证明能构建；正式 A/B GLB、逐人像素掩码、真人覆盖、真机性能、真实高清质量和人工内测是当前关键阻塞项。

@@ -20,7 +20,7 @@ val releaseSigningReady = listOf(
 
 android {
     namespace = "com.lulucamera.app"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.lulucamera.app"
@@ -98,7 +98,6 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.effects)
     implementation(libs.mediapipe.tasks.vision)
-    implementation(libs.sceneview)
     implementation(libs.androidx.room.runtime)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.work.runtime.ktx)

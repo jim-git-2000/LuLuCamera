@@ -1,9 +1,9 @@
 [versions]
 agp = "9.4.0"
 kotlin = "2.4.10"
-composeBom = "2026.09.00"
+composeBom = "2025.08.00"
 activityCompose = "1.13.0"
-lifecycle = "2.12.0"
+lifecycle = "2.9.4"
 cameraX = "1.6.2"
 mediaPipe = "1.0.0"
 sceneView = "4.37.0"

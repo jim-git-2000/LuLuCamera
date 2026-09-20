@@ -44,7 +44,7 @@ CameraX Preview ─────────────────────�
 
 `CharacterOverlay` 是用于贯通交互与动作映射的矢量原型。它能区分 A/B、跟随锚点和尺度，并响应身体及四肢角度，但不能代替 PLAN 中要求的绑定 GLB、逐人掩码合成和真人无残留覆盖。
 
-SceneView 依赖已经固定，但在正式 A/B GLB 到位前不编造模型和骨骼。后续 3D 层消费同一个 `CharacterPose`，无需修改相机、追踪和交互层。
+SceneView 版本候选已记录，目前未加入 app 依赖图，但在正式 A/B GLB 到位前不编造模型和骨骼。后续 3D 层消费同一个 `CharacterPose`，无需修改相机、追踪和交互层。
 
 ## 线程与回退
 
