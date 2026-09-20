@@ -1,0 +1,76 @@
+# 操作系统与编辑器本地文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# 本地代理状态
+.agents/
+.codex/
+
+# Android / Gradle / Kotlin 构建缓存和产物
+.gradle/
+.kotlin/
+build/
+out/
+.cxx/
+.externalNativeBuild/
+captures/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+# 不忽略 JAR：后续 gradle-wrapper.jar 需要纳入版本管理
+
+# Python 环境、缓存和打包产物
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+dist/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# 本地配置和签名凭证；允许提交不含真实凭证的模板
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+keystore.properties
+key.properties
+
+# 运行缓存、日志、临时数据与生成结果
+.cache/
+*.log
+logs/
+tmp/
+temp/
+/backend/storage/
+/backend/uploads/
+/backend/outputs/
+/experiments/outputs/
+/experiments/cache/
+
+# 不全局忽略图片、GLB、模型权重或锁文件；按目录管理正式资产
