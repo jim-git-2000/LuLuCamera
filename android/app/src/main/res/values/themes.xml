@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.LuLuCamera" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#18130F</item>
+        <item name="android:navigationBarColor">#18130F</item>
+    </style>
+</resources>

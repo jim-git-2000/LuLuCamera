@@ -70,7 +70,11 @@ temp/
 /backend/storage/
 /backend/uploads/
 /backend/outputs/
+/backend/test-results.xml
 /experiments/outputs/
 /experiments/cache/
+
+# CI 按锁定地址准备的 MediaPipe 运行模型
+/android/app/src/main/assets/models/*.task
 
 # 不全局忽略图片、GLB、模型权重或锁文件；按目录管理正式资产

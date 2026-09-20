@@ -1,0 +1,11 @@
+#!/bin/sh
+
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+
+if [ ! -r "$CLASSPATH" ]; then
+    echo "缺少 gradle/wrapper/gradle-wrapper.jar，无法启动 Gradle Wrapper。" >&2
+    exit 1
+fi
+
+exec java -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"

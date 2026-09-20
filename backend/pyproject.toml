@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lulucamera-backend"
+version = "0.1.0"
+description = "LuLuCamera 拍后高清生成服务"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.141.1",
+  "huey==3.4.0",
+  "pillow==11.3.0",
+  "python-multipart==0.0.20",
+  "uvicorn[standard]==0.35.0",
+]
+
+[project.optional-dependencies]
+dev = ["httpx==0.28.1", "pytest==8.4.2"]
+gpu = ["diffusers==0.35.1", "safetensors==0.6.2", "torch==2.8.0", "transformers==4.56.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["lulucamera_backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
