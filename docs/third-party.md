@@ -9,6 +9,7 @@
 | Kotlin / Compose Compiler | `2.4.10` | 客户端语言与 Compose 编译 | Apache-2.0 |
 | KSP | `2.3.10` | Room 源码生成 | Apache-2.0；配合 AGP 9 内置 Kotlin，不使用不兼容的 `kapt` 插件 |
 | Compose BOM | `2025.08.00` | UI 依赖版本对齐 | Apache-2.0 |
+| AndroidX Core / Core KTX | `1.18.0` | Android 平台兼容 API | Apache-2.0；官方 AAR 元数据要求 `minCompileSdk=36`，替代要求 API 37 的 1.19.0 |
 | CameraX | `1.6.2` | 预览、分析、镜头生命周期 | Apache-2.0 |
 | MediaPipe Tasks Vision | `1.0.0` | 人体关键点和分割掩码 | Apache-2.0；适配思路来源于官方 Pose Landmarker Android 示例 |
 | Pose Landmarker Lite | [官方 float16 v1](https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task) | 最多 3 人的端侧姿态识别 | 构建时下载到 `android/app/src/main/assets/models/`；SHA-256 为 `59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a`；发布前再次核对模型卡和分发条款 |
