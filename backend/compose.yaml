@@ -1,0 +1,33 @@
+# 演示：docker compose -f backend/compose.yaml up --build
+# GPU：docker compose -f backend/compose.yaml -f backend/compose.gpu.yaml up --build
+x-common: &common
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  image: lulucamera-backend:local
+  restart: unless-stopped
+  volumes:
+    - lulu-data:/data
+    - ../assets/characters:/assets/characters:ro
+  environment: &environment
+    LULU_GENERATOR: fake
+    LULU_STORAGE_DIR: /data
+    LULU_ASSET_DIR: /assets/characters
+    LULU_GENERATION_TIMEOUT_SECONDS: 300
+    LULU_JOB_TTL_HOURS: 24
+services:
+  api:
+    <<: *common
+    ports:
+      - '127.0.0.1:8000:8000'
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost:8000/health", timeout=5)']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  worker:
+    <<: *common
+    command: ['huey_consumer', 'lulucamera_backend.tasks.huey', '-k', 'thread', '-w', '1']
+    stop_grace_period: 15s
+volumes:
+  lulu-data:

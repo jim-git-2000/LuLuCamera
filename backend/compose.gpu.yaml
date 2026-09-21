@@ -1,0 +1,21 @@
+x-gpu-env: &gpu-env
+  LULU_GENERATOR: diffusers
+  LULU_MODEL_ID: diffusers/stable-diffusion-xl-1.0-inpainting-0.1
+  LULU_DEVICE: cuda
+  LULU_IP_ADAPTER_ID: h94/IP-Adapter
+  LULU_IP_ADAPTER_SUBFOLDER: sdxl_models
+  LULU_IP_ADAPTER_WEIGHT: ip-adapter_sdxl.bin
+services:
+  api:
+    environment: *gpu-env
+  worker:
+    image: lulucamera-backend-gpu:local
+    build:
+      args:
+        GPU: 'true'
+    environment: *gpu-env
+    gpus: all
+    volumes:
+      - lulu-models:/models
+volumes:
+  lulu-models:

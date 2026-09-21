@@ -1,0 +1,11 @@
+.git
+**/__pycache__
+**/.venv
+**/storage
+**/build
+**/.gradle
+**/.env
+**/*.jks
+**/*.keystore
+android
+assets

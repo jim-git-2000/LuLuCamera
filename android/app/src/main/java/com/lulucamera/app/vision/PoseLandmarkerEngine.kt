@@ -6,149 +6,85 @@ import android.graphics.Matrix
 import android.os.SystemClock
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mediapipe.framework.image.MPImage
+import com.google.mediapipe.framework.image.ByteBufferExtractor
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
-import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
-import com.lulucamera.app.model.Joint
-import com.lulucamera.app.model.Keypoint
-import com.lulucamera.app.model.PersonObservation
-import com.lulucamera.app.model.PersonPose
-import com.lulucamera.app.model.PointN
-import com.lulucamera.app.model.RectN
-import java.util.concurrent.atomic.AtomicLong
+import com.lulucamera.app.model.*
+import java.nio.ByteOrder
 
-class PoseLandmarkerEngine(
-    context: Context,
-    private val listener: Listener,
-    delegate: Delegate = Delegate.CPU,
-    maxPoses: Int = 3,
-) : AutoCloseable {
-    interface Listener {
-        fun onResult(result: VisionResult)
-        fun onError(message: String)
-    }
-
+/** 仅在同一个 CameraX 分析线程上创建、调用和关闭；背压由 CameraX 管理。 */
+class PoseLandmarkerEngine(context: Context, delegate: Delegate = Delegate.CPU, maxPoses: Int = 3) : AutoCloseable {
     data class VisionResult(
-        val frameId: Long,
-        val timestampMs: Long,
-        val imageWidth: Int,
-        val imageHeight: Int,
-        val inferenceTimeMs: Long,
-        val observations: List<PersonObservation>,
-        /** 接收方取得所有权，使用完毕后必须 recycle。 */
+        val frameId: Long, val timestampMs: Long, val imageWidth: Int, val imageHeight: Int,
+        val inferenceTimeMs: Long, val observations: List<PersonObservation>,
+        /** 接收方取得所有权。 */
         val frameBitmap: Bitmap,
     )
+    private var frameCounter = 0L
+    private var lastTimestamp = 0L
+    private val landmarker = PoseLandmarker.createFromOptions(context,
+        PoseLandmarker.PoseLandmarkerOptions.builder()
+            .setBaseOptions(BaseOptions.builder().setDelegate(delegate)
+                .setModelAssetPath("models/pose_landmarker_lite.task").build())
+            .setRunningMode(RunningMode.VIDEO).setNumPoses(maxPoses).setOutputSegmentationMasks(true)
+            .setMinPoseDetectionConfidence(.5f).setMinPosePresenceConfidence(.5f)
+            .setMinTrackingConfidence(.5f).build())
 
-    private data class PendingFrame(val frameId: Long, val bitmap: Bitmap)
-
-    private val frameCounter = AtomicLong(0)
-    private val submittedFrames = mutableMapOf<Long, PendingFrame>()
-    private val landmarker: PoseLandmarker
-
-    init {
-        val baseOptions = BaseOptions.builder()
-            .setDelegate(delegate)
-            .setModelAssetPath(MODEL_PATH)
-            .build()
-        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(baseOptions)
-            .setRunningMode(RunningMode.LIVE_STREAM)
-            .setNumPoses(maxPoses)
-            .setOutputSegmentationMasks(true)
-            .setMinPoseDetectionConfidence(0.5f)
-            .setMinPosePresenceConfidence(0.5f)
-            .setMinTrackingConfidence(0.5f)
-            .setResultListener(::onMediaPipeResult)
-            .setErrorListener { error -> listener.onError(error.message ?: "人体识别失败") }
-            .build()
-        landmarker = PoseLandmarker.createFromOptions(context, options)
-    }
-
-    fun detect(imageProxy: ImageProxy, mirrorInput: Boolean) {
-        val frameId = frameCounter.incrementAndGet()
-        val timestamp = SystemClock.uptimeMillis()
-        val rotation = imageProxy.imageInfo.rotationDegrees
-        val sourceWidth = imageProxy.width
-        val sourceHeight = imageProxy.height
-        val bitmap = Bitmap.createBitmap(sourceWidth, sourceHeight, Bitmap.Config.ARGB_8888)
-        var oriented: Bitmap? = null
+    fun detect(image: ImageProxy, mirrorInput: Boolean): VisionResult {
+        val start = SystemClock.uptimeMillis()
+        val timestamp = maxOf(start, lastTimestamp + 1).also { lastTimestamp = it }
+        val frameId = ++frameCounter
+        val rotation = image.imageInfo.rotationDegrees
+        val crop = image.cropRect
+        // CameraX 自带转换处理 rowStride / pixelStride，不能假设 RGBA 行紧密排列。
+        val raw = image.toBitmap()
+        val matrix = Matrix().apply {
+            postRotate(rotation.toFloat())
+            if (mirrorInput) postScale(-1f, 1f)
+        }
+        val oriented = try { Bitmap.createBitmap(raw, crop.left, crop.top, crop.width(), crop.height(), matrix, true) }
+        catch (error: Exception) { raw.recycle(); throw error }
+        if (raw !== oriented) raw.recycle()
         try {
-            imageProxy.use { bitmap.copyPixelsFromBuffer(it.planes[0].buffer) }
-            val transform = Matrix().apply {
-                postRotate(rotation.toFloat())
-                if (mirrorInput) postScale(-1f, 1f)
+            BitmapImageBuilder(oriented).build().use { input ->
+                val result = landmarker.detectForVideo(input, timestamp)
+                val masks = result.segmentationMasks().orElse(emptyList())
+                try {
+                    val observations = result.landmarks().mapIndexedNotNull { index, landmarks ->
+                        val joints = Joint.entries.mapNotNull { joint ->
+                            landmarks.getOrNull(joint.mediaPipeIndex)?.let { landmark ->
+                                joint to Keypoint(PointN(landmark.x(), landmark.y()),
+                                    landmark.visibility().orElse(0f), landmark.presence().orElse(0f))
+                            }
+                        }.toMap()
+                        val pose = PersonPose(joints)
+                        val bounds = RectN.enclosing(pose.reliablePoints, padding = .06f) ?: return@mapIndexedNotNull null
+                        val mask = masks.getOrNull(index)?.let { native ->
+                            val buffer = ByteBufferExtractor.extract(native).order(ByteOrder.nativeOrder()).asFloatBuffer()
+                            require(buffer.remaining() >= native.width * native.height)
+                            val width = minOf(native.width, 256)
+                            val height = minOf(native.height, 256)
+                            PersonMask(width, height, ByteArray(width * height) { offset ->
+                                val x = (offset % width) * native.width / width
+                                val y = (offset / width) * native.height / height
+                                val value = buffer.get(y * native.width + x)
+                                (if (value.isFinite()) (value.coerceIn(0f, 1f) * 255).toInt() else 0).toByte()
+                            })
+                        }
+                        PersonObservation(frameId, timestamp, index, bounds, pose, mask != null,
+                            joints.values.count(Keypoint::isReliable).toFloat() / Joint.entries.size, mask)
+                    }
+                    return VisionResult(frameId, timestamp, oriented.width, oriented.height,
+                        (SystemClock.uptimeMillis() - start).coerceAtLeast(0), observations,
+                        oriented.copy(Bitmap.Config.ARGB_8888, false))
+                } finally { masks.forEach { it.close() } }
             }
-            val orientedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, transform, true)
-            oriented = orientedBitmap
-            if (orientedBitmap !== bitmap) bitmap.recycle()
-            val mpImage = BitmapImageBuilder(orientedBitmap).build()
-            synchronized(submittedFrames) {
-                submittedFrames[timestamp] = PendingFrame(frameId, orientedBitmap)
-                while (submittedFrames.size > 12) {
-                    submittedFrames.remove(submittedFrames.keys.first())?.bitmap?.recycle()
-                }
-            }
-            landmarker.detectAsync(mpImage, timestamp)
-        } catch (error: RuntimeException) {
-            if (!bitmap.isRecycled) bitmap.recycle()
-            oriented?.takeIf { it !== bitmap && !it.isRecycled }?.recycle()
-            listener.onError(error.message ?: "无法处理相机帧")
+        } catch (error: Exception) {
+            oriented.recycle()
+            throw error
         }
     }
-
-    override fun close() {
-        synchronized(submittedFrames) {
-            submittedFrames.values.forEach { it.bitmap.recycle() }
-            submittedFrames.clear()
-        }
-        landmarker.close()
-    }
-
-    private fun onMediaPipeResult(result: PoseLandmarkerResult, input: MPImage) {
-        val timestamp = result.timestampMs()
-        val pending = synchronized(submittedFrames) { submittedFrames.remove(timestamp) } ?: return
-        val frameId = pending.frameId
-        val segmentationMasks = result.segmentationMasks().orElse(emptyList())
-        val observations = result.landmarks().mapIndexedNotNull { index, landmarks ->
-            val joints = Joint.entries.mapNotNull { joint ->
-                landmarks.getOrNull(joint.mediaPipeIndex)?.let { landmark ->
-                    joint to Keypoint(
-                        point = PointN(landmark.x(), landmark.y()),
-                        visibility = landmark.visibility().orElse(0f),
-                        presence = landmark.presence().orElse(0f),
-                    )
-                }
-            }.toMap()
-            val pose = PersonPose(joints)
-            val bounds = RectN.enclosing(pose.reliablePoints, padding = 0.06f) ?: return@mapIndexedNotNull null
-            val reliableRatio = joints.values.count(Keypoint::isReliable).toFloat() / Joint.entries.size
-            PersonObservation(
-                frameId = frameId,
-                timestampMs = timestamp,
-                sourceIndex = index,
-                bounds = bounds,
-                pose = pose,
-                hasSegmentationMask = index < segmentationMasks.size,
-                confidence = reliableRatio,
-            )
-        }
-        listener.onResult(
-            VisionResult(
-                frameId = frameId,
-                timestampMs = timestamp,
-                imageWidth = input.width,
-                imageHeight = input.height,
-                inferenceTimeMs = (SystemClock.uptimeMillis() - timestamp).coerceAtLeast(0),
-                observations = observations,
-                frameBitmap = pending.bitmap,
-            ),
-        )
-    }
-
-    private companion object {
-        const val MODEL_PATH = "models/pose_landmarker_lite.task"
-    }
+    override fun close() = landmarker.close()
 }

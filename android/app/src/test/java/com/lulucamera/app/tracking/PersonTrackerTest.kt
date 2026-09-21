@@ -54,6 +54,26 @@ class PersonTrackerTest {
         assertTrue(tracker.update(emptyList()).isEmpty())
     }
 
+    @Test
+    fun segmentationRejectsBackgroundInsideBoundingBox() {
+        val tracker = PersonTracker(confirmationHits = 1)
+        val mask = com.lulucamera.app.model.PersonMask(2, 2, byteArrayOf(0, 0, 255.toByte(), 0))
+        tracker.update(listOf(observation(1, .2f).copy(mask = mask)))
+        assertNull(tracker.hitTest(PointN(.3f, .3f)))
+        assertTrue(tracker.hitTest(PointN(.3f, .7f)) != null)
+    }
+
+    @Test
+    fun ambiguousCrossingPausesInsteadOfSwappingCharacters() {
+        val tracker = PersonTracker(confirmationHits = 1)
+        val initial = tracker.update(listOf(observation(1, .2f), observation(1, .4f)))
+        tracker.selectCharacter(initial[0].trackId, CharacterId.LULU_A)
+        tracker.selectCharacter(initial[1].trackId, CharacterId.LULU_B)
+        val crossing = tracker.update(listOf(observation(2, .3f), observation(2, .3f)))
+        assertTrue(crossing.all { it.state == TrackState.LOST })
+        assertEquals(listOf(CharacterId.LULU_A, CharacterId.LULU_B), crossing.map { it.selectedCharacter })
+    }
+
     private fun observation(frame: Long, left: Float, width: Float = 0.25f): PersonObservation {
         val right = left + width
         val center = (left + right) / 2f

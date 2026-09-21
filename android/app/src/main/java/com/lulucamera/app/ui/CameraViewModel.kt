@@ -1,7 +1,13 @@
 package com.lulucamera.app.ui
 
 import android.app.Application
+import android.content.Context
+import java.io.File
 import android.graphics.Bitmap
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import com.lulucamera.app.character.CharacterCatalog
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lulucamera.app.camera.CaptureSnapshot
@@ -20,6 +26,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
@@ -42,13 +50,16 @@ data class CameraUiState(
     val capture: CaptureSnapshot? = null,
     val previewVariant: PreviewVariant = PreviewVariant.INSTANT,
     val generationJob: GenerationJob? = null,
+    val generationMode: String = "unknown",
+    val assetsReady: Boolean = false,
     val busy: Boolean = false,
     val message: String? = null,
 )
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
-    private data class LatestFrame(val bitmap: Bitmap, val tracks: List<TrackedCharacter>)
+    private data class LatestFrame(val bitmap: Bitmap, val tracks: List<TrackedCharacter>, val timestampMs: Long)
 
+    private val preferences = application.getSharedPreferences("active-capture", Context.MODE_PRIVATE)
     private val tracker = PersonTracker()
     private val poseMapper = PoseMapper()
     private val captureStore = CaptureStore(application)
@@ -56,18 +67,42 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val mutableState = MutableStateFlow(CameraUiState())
     private val frameLock = Any()
     private var latestFrame: LatestFrame? = null
+    // UI 持有的 Bitmap 交给 GC 释放，不能在 RenderThread 使用期间主动 recycle。
+    var previewFrame: Bitmap? by mutableStateOf(null)
+        private set
     private var generationObserver: Job? = null
     val state: StateFlow<CameraUiState> = mutableState.asStateFlow()
+    val recentJobs = generationRepository.observeRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val generationConfigured: Boolean get() = generationRepository.isConfigured
 
+    init {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { CharacterCatalog.load(application) }
+            mutableState.update { it.copy(assetsReady = true) }
+            runCatching {
+                generationRepository.resumePending()
+                val id = preferences.getString("captureId", null) ?: return@runCatching
+                val snapshot = withContext(Dispatchers.IO) { captureStore.restore(id) } ?: return@runCatching
+                // 恢复期间若用户已经拍了新照片，不覆盖新状态。
+                if (mutableState.value.capture != null || mutableState.value.busy) return@runCatching
+                mutableState.update { it.copy(page = AppPage.PREVIEW, capture = snapshot) }
+                generationRepository.forCapture(snapshot.originalPath)?.let {
+                    if (mutableState.value.capture?.captureId == snapshot.captureId) observeGeneration(it.localId)
+                }
+            }.onFailure { showError("上次任务恢复失败，可重新拍照") }
+        }
+    }
+
     fun onVisionResult(result: PoseLandmarkerEngine.VisionResult) {
+        if (mutableState.value.page != AppPage.CAMERA) { result.frameBitmap.recycle(); return }
         val tracks = tracker.update(result.observations)
+        poseMapper.retain(tracks.map { it.trackId }.toSet())
         val characters = tracks.map { track ->
             TrackedCharacter(track, poseMapper.map(track.trackId, track.observation.pose))
         }
         synchronized(frameLock) {
-            latestFrame?.bitmap?.recycle()
-            latestFrame = LatestFrame(result.frameBitmap, characters)
+            latestFrame = LatestFrame(result.frameBitmap, characters, result.timestampMs)
+            previewFrame = result.frameBitmap
         }
         val selected = mutableState.value.selectedTrackId
             ?.takeIf { id -> tracks.any { it.trackId == id && it.state != TrackState.REMOVED } }
@@ -78,7 +113,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 imageWidth = result.imageWidth,
                 imageHeight = result.imageHeight,
                 inferenceTimeMs = result.inferenceTimeMs,
-                message = null,
             )
         }
     }
@@ -102,8 +136,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun switchCamera() {
         tracker.reset()
+        poseMapper.retain(emptySet())
+        previewFrame = null
         synchronized(frameLock) {
-            latestFrame?.bitmap?.recycle()
             latestFrame = null
         }
         mutableState.update {
@@ -112,11 +147,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun capture() {
-        if (mutableState.value.busy) return
+        if (mutableState.value.busy || !mutableState.value.assetsReady) return
         val frozen = synchronized(frameLock) {
-            latestFrame?.let { LatestFrame(it.bitmap.copy(Bitmap.Config.ARGB_8888, false), it.tracks) }
+            latestFrame?.let { LatestFrame(it.bitmap.copy(Bitmap.Config.ARGB_8888, false), it.tracks, it.timestampMs) }
         }
-        if (frozen == null) {
+        if (frozen == null || android.os.SystemClock.uptimeMillis() - frozen.timestampMs > 1500) {
+            frozen?.bitmap?.recycle()
             showError("相机画面尚未准备好，请稍后重试")
             return
         }
@@ -129,12 +165,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             }.onSuccess { snapshot ->
+                preferences.edit().putString("captureId", snapshot.captureId).apply()
                 mutableState.update {
                     it.copy(
                         page = AppPage.PREVIEW,
                         capture = snapshot,
                         previewVariant = PreviewVariant.INSTANT,
                         generationJob = null,
+                        generationMode = "unknown",
                         busy = false,
                         message = null,
                     )
@@ -181,24 +219,50 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             showError("高清服务尚未配置，原图和即时噜噜图仍可正常保存")
             return
         }
-        if (mutableState.value.generationJob != null) return
+        if (mutableState.value.generationJob != null || mutableState.value.busy) return
+        mutableState.update { it.copy(busy = true) }
         viewModelScope.launch {
-            val localId = generationRepository.enqueue(snapshot)
-            observeGeneration(localId)
+            runCatching { generationRepository.enqueue(snapshot) }
+                .onSuccess { observeGeneration(it) }
+                .onFailure { showError("无法创建任务，请稍后重试") }
+            mutableState.update { it.copy(busy = false) }
+        }
+    }
+
+    fun openGeneration(job: GenerationJob) {
+        if (mutableState.value.busy) return
+        mutableState.update { it.copy(busy = true) }
+        viewModelScope.launch {
+            val captureId = File(job.originalPath).parentFile?.name
+            val snapshot = withContext(Dispatchers.IO) { captureId?.let(captureStore::restore) }
+            if (snapshot == null) {
+                mutableState.update { it.copy(busy = false, message = "本地照片已清理，请查看已保存的相册照片") }
+            } else {
+                preferences.edit().putString("captureId", snapshot.captureId).apply()
+                mutableState.update { it.copy(page = AppPage.PREVIEW, capture = snapshot, generationJob = null,
+                    previewVariant = PreviewVariant.INSTANT, busy = false, message = null) }
+                observeGeneration(job.localId)
+            }
         }
     }
 
     fun retryGeneration() {
         val localId = mutableState.value.generationJob?.localId ?: return
-        viewModelScope.launch { generationRepository.retry(localId) }
+        viewModelScope.launch { runCatching { generationRepository.retry(localId) }.onFailure { showError("重试失败，请稍后再试") } }
     }
 
     fun cancelGeneration() {
         val localId = mutableState.value.generationJob?.localId ?: return
-        viewModelScope.launch { generationRepository.cancel(localId) }
+        viewModelScope.launch { runCatching { generationRepository.cancel(localId) }.onFailure { showError("取消失败，请稍后再试") } }
     }
 
     fun retake() {
+        if (mutableState.value.busy) return
+        tracker.reset()
+        poseMapper.retain(emptySet())
+        previewFrame = null
+        synchronized(frameLock) { latestFrame = null }
+        preferences.edit().remove("captureId").apply()
         generationObserver?.cancel()
         mutableState.update {
             it.copy(
@@ -221,7 +285,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         synchronized(frameLock) {
-            latestFrame?.bitmap?.recycle()
             latestFrame = null
         }
         super.onCleared()
@@ -231,9 +294,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         generationObserver?.cancel()
         generationObserver = viewModelScope.launch {
             generationRepository.observe(localId).collect { job ->
+                val mode = withContext(Dispatchers.IO) {
+                    job?.resultPath?.let { path ->
+                        runCatching { File(File(path).parentFile, "generation-mode.txt").readText() }.getOrNull()
+                    } ?: "unknown"
+                }
                 mutableState.update { current ->
                     val variant = if (job?.resultPath != null) PreviewVariant.HD else current.previewVariant
-                    current.copy(generationJob = job, previewVariant = variant)
+                    current.copy(generationJob = job, previewVariant = variant, generationMode = mode)
                 }
             }
         }

@@ -1,0 +1,7 @@
+{
+  "version": "unconfigured-v1",
+  "characters": [
+    {"id": "LULU_A", "name": "噜噜 A", "prompt": "", "referenceImage": null, "glb": null},
+    {"id": "LULU_B", "name": "噜噜 B", "prompt": "", "referenceImage": null, "glb": null}
+  ]
+}

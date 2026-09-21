@@ -43,6 +43,13 @@ class PoseMapperTest {
         assertTrue(requireNotNull(mapped).scale >= 0.18f)
     }
 
+    @Test
+    fun swappingShoulderOrderDoesNotTiltUprightCharacter() {
+        val mapper = PoseMapper(smoothing = 1f)
+        val reversed = basePose(Joint.LEFT_SHOULDER to point(.6f, .3f), Joint.RIGHT_SHOULDER to point(.4f, .3f))
+        org.junit.Assert.assertEquals(0f, requireNotNull(mapper.map(1, reversed)).bodyTiltDegrees, .001f)
+    }
+
     private fun basePose(vararg overrides: Pair<Joint, Keypoint>): PersonPose {
         val values = mutableMapOf(
             Joint.NOSE to point(0.5f, 0.12f),

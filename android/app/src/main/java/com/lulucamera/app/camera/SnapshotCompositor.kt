@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import com.lulucamera.app.character.CharacterCatalog
 import com.lulucamera.app.character.CharacterPose
 import com.lulucamera.app.model.CharacterId
 import com.lulucamera.app.model.TrackState
@@ -24,6 +25,21 @@ object SnapshotCompositor {
                 }
             }
         }
+
+    fun createInstanceMask(width: Int, height: Int, tracks: List<TrackedCharacter>): Bitmap {
+        val current = tracks.filter { it.track.missedFrames == 0 }
+        val pixels = IntArray(width * height) { offset ->
+            val point = com.lulucamera.app.model.PointN((offset % width + .5f) / width, (offset / width + .5f) / height)
+            var label = 0
+            current.forEach { person ->
+                if (person.track.observation.mask?.contains(point) == true) {
+                    label = if (label == 0) person.track.observation.sourceIndex + 1 else 255
+                }
+            }
+            Color.rgb(label, label, label)
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
 
     fun createEditMask(width: Int, height: Int, tracks: List<TrackedCharacter>): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -50,13 +66,25 @@ object SnapshotCompositor {
         return bitmap
     }
 
-    private fun drawCharacter(canvas: Canvas, character: CharacterId, pose: CharacterPose) {
-        val height = (pose.scale * canvas.height).coerceAtLeast(80f)
+    fun drawCharacter(canvas: Canvas, character: CharacterId, pose: CharacterPose, imageWidth: Int = canvas.width, imageHeight: Int = canvas.height) {
+        CharacterCatalog.sprite(character)?.let { sprite ->
+            val h = (pose.scale * imageHeight).coerceAtLeast(80f)
+            val w = h * sprite.width / sprite.height
+            val x = pose.anchor.x * imageWidth
+            val y = pose.anchor.y * imageHeight
+            canvas.save()
+            canvas.rotate(pose.bodyTiltDegrees, x, y)
+            canvas.drawBitmap(sprite, null, RectF(x - w / 2, y - h * .65f, x + w / 2, y + h * .35f),
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.restore()
+            return
+        }
+        val height = (pose.scale * imageHeight).coerceAtLeast(80f)
         val width = height * 0.72f
-        val x = pose.anchor.x * canvas.width
-        val y = pose.anchor.y * canvas.height
-        val bodyColor = if (character == CharacterId.LULU_A) Color.rgb(154, 101, 69) else Color.rgb(214, 178, 139)
-        val muzzleColor = if (character == CharacterId.LULU_A) Color.rgb(213, 162, 119) else Color.rgb(242, 215, 184)
+        val x = pose.anchor.x * imageWidth
+        val y = pose.anchor.y * imageHeight
+        val bodyColor = CharacterCatalog.get(character).bodyColor
+        val muzzleColor = CharacterCatalog.get(character).muzzleColor
         val outline = Color.rgb(59, 41, 30)
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bodyColor }
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {

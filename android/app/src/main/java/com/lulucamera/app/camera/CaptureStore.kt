@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
+import com.lulucamera.app.character.CharacterCatalog
 import com.lulucamera.app.model.CharacterId
 import com.lulucamera.app.model.TrackState
 import com.lulucamera.app.ui.TrackedCharacter
@@ -41,6 +42,10 @@ class CaptureStore(private val context: Context) {
             writePng(source, original)
             writePng(rendered, instant)
             writePng(mask, editMask)
+            if (tracks.filter { it.track.missedFrames == 0 }.all { it.track.observation.mask != null }) {
+                val instances = SnapshotCompositor.createInstanceMask(source.width, source.height, tracks)
+                try { writePng(instances, File(directory, "instances.png")) } finally { instances.recycle() }
+            }
             metadata.writeText(buildMetadata(captureId, source, tracks, frontCamera).toString(2))
             return CaptureSnapshot(
                 captureId = captureId,
@@ -63,6 +68,23 @@ class CaptureStore(private val context: Context) {
             mask.recycle()
         }
     }
+
+    fun restore(captureId: String): CaptureSnapshot? = runCatching {
+        require(UUID.fromString(captureId).toString() == captureId)
+        val directory = File(context.filesDir, "captures/$captureId")
+        val metadata = File(directory, "metadata.json")
+        val files = listOf("original.png", "instant.png", "edit-mask.png", "metadata.json").map { File(directory, it) }
+        require(files.all { it.isFile })
+        val data = JSONObject(metadata.readText())
+        val people = data.getJSONArray("people")
+        CaptureSnapshot(captureId, files[0].absolutePath, files[1].absolutePath, files[2].absolutePath,
+            metadata.absolutePath, data.getInt("width"), data.getInt("height"),
+            (0 until people.length()).any {
+                people.getJSONObject(it).let { person ->
+                    person.optString("character") != "HUMAN" && person.optString("state") == "TRACKED"
+                }
+            }, metadata.lastModified())
+    }.getOrNull()
 
     fun saveToGallery(path: String): Uri {
         val source = BitmapFactory.decodeFile(path) ?: error("照片文件不可读取")
@@ -112,12 +134,13 @@ class CaptureStore(private val context: Context) {
         put("height", source.height)
         put("frontCamera", frontCamera)
         put("orientation", "upright")
-        put("characterAssetVersion", "vector-placeholder-v1")
+        put("characterAssetVersion", CharacterCatalog.version)
         put("people", JSONArray().apply {
-            tracks.forEach { tracked ->
+            tracks.filter { it.track.missedFrames == 0 }.forEach { tracked ->
                 val track = tracked.track
                 put(JSONObject().apply {
                     put("trackId", track.trackId)
+                    put("maskLabel", track.observation.sourceIndex + 1)
                     put("character", track.selectedCharacter.name)
                     put("state", track.state.name)
                     put("confidence", track.observation.confidence.toDouble())

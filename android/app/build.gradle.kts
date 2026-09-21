@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -6,6 +8,13 @@ plugins {
 
 val apiBaseUrl = providers.gradleProperty("LULU_API_BASE_URL")
     .orElse("https://api.example.invalid")
+
+val apiBaseUrlLiteral = apiBaseUrl.map { value ->
+    val uri = URI(value)
+    require(uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null &&
+        uri.query == null && uri.fragment == null) { "LULU_API_BASE_URL 必须为不含凭证、查询参数和片段的 HTTP(S) 地址" }
+    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+}
 
 val releaseStoreFile = providers.environmentVariable("LULU_RELEASE_STORE_FILE")
 val releaseStorePassword = providers.environmentVariable("LULU_RELEASE_STORE_PASSWORD")
@@ -29,7 +38,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "API_BASE_URL", "\"${apiBaseUrl.get()}\"")
+        buildConfigField("String", "API_BASE_URL", apiBaseUrlLiteral.get())
     }
 
     signingConfigs {
@@ -57,6 +66,9 @@ android {
             )
         }
     }
+
+    // 直接打包统一素材目录；补图后不需要复制到第二处。
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("../assets"))
 
     buildFeatures {
         compose = true

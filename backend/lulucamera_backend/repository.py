@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -42,6 +43,13 @@ class Job:
             data.pop(private)
         data["retryable"] = bool(data["retryable"])
         data["result_url"] = f"/generations/{self.id}/result" if self.status == "completed" else None
+        receipt = Path(self.metadata_path).parent / "receipt.json"
+        if self.status == "completed":
+            import json
+            try:
+                data.update(json.loads(receipt.read_text()))
+            except (OSError, ValueError):
+                pass
         return data
 
 
@@ -60,7 +68,8 @@ class JobRepository:
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS cancelled_requests (owner_hash TEXT NOT NULL, idempotency_key TEXT NOT NULL, PRIMARY KEY(owner_hash, idempotency_key))")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS generation_jobs (
@@ -83,6 +92,20 @@ class JobRepository:
                 """
             )
 
+    def cancel_by_key(self, owner: str, key: str) -> tuple[Job | None, str | None]:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("INSERT OR IGNORE INTO cancelled_requests VALUES (?, ?)", (owner, key))
+            row = connection.execute("SELECT * FROM generation_jobs WHERE owner_hash=? AND idempotency_key=?",
+                                     (owner, key)).fetchone()
+            if row is None:
+                return None, None
+            job = Job(**dict(row))
+            if job.status != "expired":
+                connection.execute("UPDATE generation_jobs SET status='cancelled', error_code=NULL, retryable=0, updated_at=? WHERE id=?",
+                                   (utc_now(), job.id))
+            return job, job.status
+
     def create(
         self,
         job_id: str,
@@ -92,10 +115,26 @@ class JobRepository:
         mask_path: str,
         metadata_path: str,
         reference_path: str | None,
+        max_active_jobs: int = 20,
     ) -> tuple[Job, bool]:
         now = utc_now()
         expires = (datetime.now(UTC) + timedelta(hours=self.ttl_hours)).isoformat()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM generation_jobs WHERE owner_hash=? AND idempotency_key=?",
+                (owner, idempotency_key),
+            ).fetchone()
+            if existing:
+                return Job(**dict(existing)), False
+            if connection.execute("SELECT 1 FROM cancelled_requests WHERE owner_hash=? AND idempotency_key=?",
+                                  (owner, idempotency_key)).fetchone():
+                from .editing import GenerationError
+                raise GenerationError("REQUEST_CANCELLED")
+            count = connection.execute("SELECT count(*) FROM generation_jobs WHERE status IN ('queued','running')").fetchone()[0]
+            if count >= max_active_jobs:
+                from .editing import GenerationError
+                raise GenerationError("QUEUE_FULL", True)
             try:
                 connection.execute(
                     """
@@ -119,7 +158,7 @@ class JobRepository:
         return self.get(job_id), created
 
     def get(self, job_id: str) -> Job:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute("SELECT * FROM generation_jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             raise KeyError(job_id)
@@ -132,7 +171,7 @@ class JobRepository:
         return job
 
     def get_by_idempotency(self, owner: str, idempotency_key: str) -> Job | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT * FROM generation_jobs WHERE owner_hash = ? AND idempotency_key = ?",
                 (owner, idempotency_key),
@@ -154,7 +193,7 @@ class JobRepository:
         if allowed_from:
             clauses.append(f"status IN ({','.join('?' for _ in allowed_from)})")
             values.extend(allowed_from)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 f"""
                 UPDATE generation_jobs
@@ -166,15 +205,46 @@ class JobRepository:
             )
             return cursor.rowcount == 1
 
+    def cancel(self, job_id: str) -> str:
+        """原子取消并返回此前状态，避免删除仍由 Worker 使用的输入。"""
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT status FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            previous = row[0]
+            if previous not in ("expired", "cancelled"):
+                connection.execute("UPDATE generation_jobs SET status='cancelled', error_code=NULL, retryable=0, updated_at=? WHERE id=?",
+                                   (utc_now(), job_id))
+            return previous
+
+    def retry(self, job_id: str, limit: int) -> bool:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT status, retryable FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row[0] != "failed" or not row[1]:
+                return False
+            count = connection.execute("SELECT count(*) FROM generation_jobs WHERE status IN ('queued','running')").fetchone()[0]
+            if count >= limit:
+                from .editing import GenerationError
+                raise GenerationError("QUEUE_FULL", True)
+            connection.execute("UPDATE generation_jobs SET status='queued', error_code=NULL, retryable=0, updated_at=? WHERE id=?",
+                               (utc_now(), job_id))
+            return True
+
     def active_count(self) -> int:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS count FROM generation_jobs WHERE status IN ('queued', 'running')"
             ).fetchone()
         return int(row["count"])
 
+    def queued_ids(self) -> list[str]:
+        with closing(self._connect()) as connection, connection:
+            return [row[0] for row in connection.execute("SELECT id FROM generation_jobs WHERE status='queued'")]
+
     def recover_interrupted(self) -> int:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 """
                 UPDATE generation_jobs SET status = 'failed', error_code = 'WORKER_INTERRUPTED',
@@ -186,7 +256,7 @@ class JobRepository:
 
     def expire_due(self) -> list[Job]:
         now = utc_now()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 "SELECT * FROM generation_jobs WHERE expires_at < ? AND status != 'expired'", (now,)
             ).fetchall()

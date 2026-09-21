@@ -38,7 +38,11 @@ class PoseMapper(private val smoothing: Float = 0.35f) {
         } else {
             torso * 2.7f
         }
-        val shoulderAngle = angleDegrees(leftShoulder, rightShoulder).coerceIn(-25f, 25f)
+        // 左右肩在前后镜头会反向，斜率角应以无向线计算，避免直立姿态固定倾斜 25°。
+        var shoulderAngle = angleDegrees(leftShoulder, rightShoulder)
+        if (shoulderAngle > 90f) shoulderAngle -= 180f
+        if (shoulderAngle < -90f) shoulderAngle += 180f
+        shoulderAngle = shoulderAngle.coerceIn(-25f, 25f)
         val shoulderWidth = leftShoulder.distanceTo(rightShoulder).coerceAtLeast(0.04f)
         val hipWidth = leftHip.distanceTo(rightHip).coerceAtLeast(0.04f)
         val raw = CharacterPose(
@@ -56,6 +60,9 @@ class PoseMapper(private val smoothing: Float = 0.35f) {
         previous[trackId] = smoothed
         return smoothed
     }
+
+    @Synchronized
+    fun retain(ids: Set<Long>) { previous.keys.retainAll(ids) }
 
     @Synchronized
     fun remove(trackId: Long) {

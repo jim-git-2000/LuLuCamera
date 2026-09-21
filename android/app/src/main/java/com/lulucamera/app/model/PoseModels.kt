@@ -23,7 +23,7 @@ data class Keypoint(
     val visibility: Float,
     val presence: Float,
 ) {
-    val isReliable: Boolean get() = visibility >= 0.45f && presence >= 0.45f
+    val isReliable: Boolean get() = visibility >= 0.45f && presence >= 0.45f && point.x.isFinite() && point.y.isFinite()
 }
 
 data class PersonPose(val joints: Map<Joint, Keypoint>) {
@@ -45,6 +45,7 @@ data class PersonObservation(
     val pose: PersonPose,
     val hasSegmentationMask: Boolean,
     val confidence: Float,
+    val mask: PersonMask? = null,
 )
 
 enum class CharacterId {

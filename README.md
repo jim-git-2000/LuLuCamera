@@ -1,13 +1,14 @@
 # LuLuCamera
 
-面向 Android 的噜噜相机：点击画面中的人物，将其实时替换为噜噜水豚角色，拍照保存，并可在拍照后生成高清版本。
+面向 Android 的噜噜相机：点击画面中的人物，让噜噜 PNG 角色实时跟随人物，拍照保存，并可在拍照后生成高清版本。
 
 ## 当前状态
 
-已写入 Android 与高清服务的完整 MVP 代码骨架：相机、人体姿态、基础追踪、点选、矢量噜噜、同帧拍照、对比与相册保存，以及经用户确认后才启动的持久高清任务。后端包含幂等 API、Huey/SQLite 队列、假生成器和 Diffusers 适配入口。
+本轮按用户确认的 PNG 图片版实现 Android 与高清服务：相机、人体姿态、基础追踪、点选、PNG 角色（缺图时矢量占位）、逐人掩码点选、同帧拍照、对比与相册保存，以及经用户确认后才启动的持久高清任务。后端包含幂等 API、Huey/SQLite 队列、明确标注的假生成器和 Diffusers 逐人 Inpainting 路径。图片和参考图可以先留空。后续将 A/B PNG 放到固定目录，构建自动打包，高清服务自动选图；未提供专属参考图时使用同一张 PNG。
 
-当前仍不是可宣称完成的 M2：正式 GLB、逐人像素掩码、真机性能和覆盖效果、真实 GPU 生成质量、CI 构建及用户内测均未验收。详细边界见 [验证状态](docs/verification-status.md)。
+当前仍不是可宣称完成的 M2：CI 构建、真机性能、最终 PNG 素材效果、真实 GPU 生成质量及用户内测均未验收。3D/GLB 是后续路线，不属于本轮图片版。详细边界见 [验证状态](docs/verification-status.md)。
 
+- [补齐 PNG 后如何使用](docs/ready-to-use.md)：素材入口、默认 GPU 服务、CI 构建与验收。
 - [开发计划](PLAN.md)：产品范围、技术候选、12 个实施步骤与验收条件。
 - [项目规范](AGENTS.md)：工作方式、开发环境约束与 Git 规则。
 
@@ -47,6 +48,8 @@ cd android
 cd android
 ./gradlew assembleDebug -PLULU_API_BASE_URL=https://example.com
 ```
+
+GitHub Actions 手动运行时可填写 `api_base_url`，或设置仓库变量 `LULU_API_BASE_URL`；同一地址用于检查和 APK 构建。不填写则保持离线拍照可用、高清服务未配置。
 
 Debug 构建可为模拟器联调指定 `http://10.0.2.2:8000`，Release 只接受 HTTPS。普通拍照和相册保存始终不依赖服务。
 

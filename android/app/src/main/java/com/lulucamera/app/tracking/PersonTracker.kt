@@ -42,9 +42,17 @@ class PersonTracker(
             }
         }.sortedByDescending(Candidate::score)
 
+        // 两个匹配分数接近时保留原身份但暂停替换，避免贪心匹配直接互换 A/B。
+        val ambiguousTracks = candidates.groupBy { it.trackIndex }.filterValues {
+            it.size > 1 && it[0].score - it[1].score < .06f
+        }.keys
+        val ambiguousObservations = candidates.groupBy { it.observationIndex }.filterValues {
+            it.size > 1 && it[0].score - it[1].score < .06f
+        }.keys + candidates.filter { it.trackIndex in ambiguousTracks }.map { it.observationIndex }
         val matchedTracks = mutableSetOf<Int>()
         val matchedObservations = mutableSetOf<Int>()
         for (candidate in candidates) {
+            if (candidate.trackIndex in ambiguousTracks || candidate.observationIndex in ambiguousObservations) continue
             if (!matchedTracks.add(candidate.trackIndex)) continue
             if (!matchedObservations.add(candidate.observationIndex)) {
                 matchedTracks.remove(candidate.trackIndex)
@@ -65,7 +73,7 @@ class PersonTracker(
         }
 
         limited.forEachIndexed { index, observation ->
-            if (index !in matchedObservations) {
+            if (index !in matchedObservations && index !in ambiguousObservations) {
                 tracks += MutableTrack(
                     id = nextId++,
                     observation = observation,
@@ -87,7 +95,8 @@ class PersonTracker(
     @Synchronized
     fun hitTest(point: PointN): PersonTrack? = snapshot()
         .asSequence()
-        .filter { it.state == TrackState.TRACKED && it.observation.bounds.contains(point) }
+        .filter { it.state == TrackState.TRACKED && (it.observation.mask?.contains(point)
+            ?: it.observation.bounds.contains(point)) }
         .minByOrNull { it.observation.bounds.area }
 
     @Synchronized

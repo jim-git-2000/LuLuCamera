@@ -12,8 +12,12 @@ class CaptureCleanupWorker(context: Context, parameters: WorkerParameters) : Cor
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(LOCAL_RETENTION_DAYS)
         val root = File(applicationContext.filesDir, "captures")
-        root.listFiles()?.filter { it.isDirectory && it.lastModified() < cutoff }?.forEach(File::deleteRecursively)
-        GenerationDatabase.get(applicationContext).jobs().deleteFinishedBefore(cutoff)
+        val dao = GenerationDatabase.get(applicationContext).jobs()
+        val activeDirectories = dao.active().mapNotNull { File(it.originalPath).parent }.toSet()
+        root.listFiles()?.filter {
+            it.isDirectory && it.lastModified() < cutoff && it.absolutePath !in activeDirectories
+        }?.forEach(File::deleteRecursively)
+        dao.deleteFinishedBefore(cutoff)
         Result.success()
     }
 

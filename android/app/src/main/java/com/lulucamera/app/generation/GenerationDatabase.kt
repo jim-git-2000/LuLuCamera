@@ -9,6 +9,7 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.room.Upsert
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -19,13 +20,26 @@ interface GenerationJobDao {
     @Query("SELECT * FROM generation_jobs WHERE localId = :localId")
     suspend fun get(localId: String): GenerationJob?
 
+    @Query("SELECT * FROM generation_jobs ORDER BY createdAtMs DESC LIMIT 30")
+    fun observeRecent(): Flow<List<GenerationJob>>
+
     @Query("SELECT * FROM generation_jobs WHERE localId = :localId")
     fun observe(localId: String): Flow<GenerationJob?>
 
-    @Query("SELECT * FROM generation_jobs WHERE status IN ('LOCAL_PENDING', 'QUEUED', 'RUNNING')")
+    @Query("SELECT * FROM generation_jobs WHERE status IN ('LOCAL_PENDING', 'QUEUED', 'RUNNING') OR errorCode = 'CANCEL_PENDING'")
     suspend fun active(): List<GenerationJob>
 
-    @Query("DELETE FROM generation_jobs WHERE updatedAtMs < :beforeMs AND status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED')")
+    @Query("SELECT * FROM generation_jobs WHERE originalPath = :path ORDER BY createdAtMs DESC LIMIT 1")
+    suspend fun forCapture(path: String): GenerationJob?
+
+    @Transaction
+    suspend fun updateUnlessCancelled(job: GenerationJob): Boolean {
+        if (get(job.localId)?.status == GenerationStatus.CANCELLED) return false
+        upsert(job)
+        return true
+    }
+
+    @Query("DELETE FROM generation_jobs WHERE updatedAtMs < :beforeMs AND status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED') AND (errorCode IS NULL OR errorCode != 'CANCEL_PENDING')")
     suspend fun deleteFinishedBefore(beforeMs: Long): Int
 }
 
